@@ -1,0 +1,1 @@
+. "$PSScriptRoot\..\..\scripts\Set-SharePointIndex.ps1"
