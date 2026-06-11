@@ -1,5 +1,5 @@
 <div id="banner" style="width:100%; height:140px; background:#fff; display:flex; align-items:center; justify-content:center;">
-  <img src="../assets/Precision Driver - Full Banner.png" height="120" style="padding:10px" />
+  <img src="/assets/Precision Driven - Full Banner.png" height="120" style="padding:10px" />
 </div>
 
 # Security Policy
