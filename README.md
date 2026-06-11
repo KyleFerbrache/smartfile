@@ -105,6 +105,19 @@ In practice, that means:
 - files should not be locked by another process during execution,
 - and any environment-specific usage details should be documented in the corresponding guide under **`docs/`**.
 
+
+### Set-SharePointIndex
+
+Command to preview changes for all files modified since midnight this morning
+```powershell
+. "C:/Path/To/SmartFile/Scripts/Set-SharePointIndex.ps1" -rootPath "Freeman Mathis and Gary/FMG - Financial Systems - Documents/01 - Data Sources" -Days 0 -DoNotApply
+```
+
+Command to apply changes for all files modified since midnight yesterday morning
+```powershell
+. "C:/Path/To/SmartFile/Scripts/Set-SharePointIndex.ps1" -rootPath "Freeman Mathis and Gary/FMG - Financial Systems - Documents/01 - Data Sources" -Days 1
+```
+
 ---
 
 ## Who This Repository Is For

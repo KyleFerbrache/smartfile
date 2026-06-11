@@ -18,20 +18,35 @@ Only process files modified in the last X days (optional)
 If not provided, the script will evaluate all files in the RootPath
 
 .EXAMPLE
-.\Set-SharePointIndex.ps1 -RootPath "Freeman Mathis and Gary/FMG - Financial Systems - Documents/01 - Data Sources" -Days 7
+.\Set-SharePointIndex.ps1 -RootPath "Freeman Mathis and Gary/FMG - Financial Systems - Documents/01 - Data Sources" -Days 1
 
 .EXAMPLE
 .\Set-SharePointIndex.ps1 - RootPath "Freeman Mathis and Gary/FMG - Financial Systems - Documents/01 - Data Sources"
 #>
 
-param (
-    [Parameter(Mandatory=$true)]
-    [string]$RootPath,
 
-    [int]$Days
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$rootPath,
+
+    [ValidateRange(0, 3650)]
+    [int]$Days = 1,
+
+    [switch]$DoNotApply
 )
 
+
+# Use compact progress when running in PowerShell 7+
+# This usually renders as a bottom/status-line style progress display.
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSStyle.Progress.View = 'Minimal'
+}
+
+
+
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+$RootPath = "$HOME/$rootPath"
 
 # Create a new OpenXML content body for `docProps/core.xml`
 function New-CoreXmlContent {
@@ -57,7 +72,7 @@ function New-CoreXmlContent {
 # Determine the earliest lastModifiedDateTime (if -Days is provided)
 $cutoffDate = $null
 if ($PSBoundParameters.ContainsKey("Days")) {
-    $cutoffDate = (Get-Date).AddDays(-$Days)
+    $cutoffDate = (Get-Date).ToUniversalTime().Date.AddDays(-$Days)
     Write-Host "Scanning *.xlsx Files in $RootPath - Modified After: $cutoffDate"
 }
 else {
@@ -77,13 +92,21 @@ if ($totalFiles -eq 0) {
     return
 }
 
+if ($DoNotApply) {
+    Write-Host "Found $totalFiles eligible files.  Validating..." -ForegroundColor Red
+}
+else {
 Write-Host "Found $totalFiles eligible files. Processing..." -ForegroundColor Cyan
+}
 
 # Processing Counters
 $updated = 0
 $created = 0
 $skipped = 0
 $errored = 0
+
+$wouldUpdate = 0
+$wouldCreate = 0
 
 # Phase 2 - Conditional Processing
 $index = 0
@@ -97,21 +120,26 @@ foreach ($file in $files) {
         -PercentComplete (($index/$totalFiles) * 100)
 
     $filePath = $file.FullName
-    $baseName = $file.$baseName
+    $baseName = $file.BaseName
 
     try {
-        $zip = [System.IO.Compression.ZipFile]::Open($filePath, 'Update')
+        $zipMode = if ($DoNotApply) { 'Read' } else { 'Update' }
+        $zip = [System.IO.Compression.ZipFile]::Open($filePath, $zipMode)
         $entry = $zip.GetEntry("docProps/core.xml")
 
         # Create XML if does not exist
         if (-not $entry) {
-            $entry = $zip.CreateEntry("docProps/core.xml")
-            $xmlContent = New-CoreXmlContent -Title $baseName
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $writer.Write($xmlContent)
-            $writer.close()
-            
-            $created++
+            if ($DoNotApply) { $wouldCreate++ } 
+            else {
+                $entry = $zip.CreateEntry("docProps/core.xml")
+                $stream = $entry.Open()
+                $xmlContent = New-CoreXmlContent -Title $baseName
+                $writer = New-Object System.IO.StreamWriter($stream)
+                $writer.Write($xmlContent)
+                $writer.close()
+                
+                $created++
+            }
         }
 
         # Evaluate XML if exists
@@ -123,23 +151,29 @@ foreach ($file in $files) {
 
             [xml]$xml = $xmlContent
             $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
-            $ns.AddNameSpace("dc", "http://purl.org/dc/elements/1.1")
+            $ns.AddNameSpace("dc", "http://purl.org/dc/elements/1.1/")
             $ns.AddNamespace("cp", "http://schemas.openxmlformats.org/package/2006/metadata/core-properties")
             
             $titleNode = $xml.SelectSingleNode("//dc:title", $ns)
 
             # If Title is Blank/Null - Write New Tag
-            if ($null -eq $titleNode) {
-                $titleNode = $xml.CreateElement("dc", "title", $ns.LookupNamespace("dc"))
-                $xml.DocumentElement.AppendChild($titleNode) | Out-Null
-                $titleNode.InnerText = $baseName
-                $updated++
+            if ($null -eq $titleNode.InnerText) {
+                if ($DoNotApply) { $wouldUpdate++ }
+                else {
+                    $titleNode = $xml.CreateElement("dc", "title", $ns.LookupNamespace("dc"))
+                    $xml.DocumentElement.AppendChild($titleNode) | Out-Null
+                    $titleNode.InnerText = $baseName
+                    $updated++
+                }
             }
 
             # If Title otherwise does not equal filename - Overwrite Tag Value
-            elseif ($titleNode -ne $baseName) {
-                $titleNode.InnerText = $baseName
-                $updated++
+            elseif ($titleNode.InnerText -ne $baseName) {
+                if ($DoNotApply) { $wouldUpdate++ }
+                else {
+                    $titleNode.InnerText = $baseName
+                    $updated++
+                }
             }
 
             # Title matches filename - Do not edit
@@ -150,11 +184,14 @@ foreach ($file in $files) {
             }
 
             # Write Back XML
-            $stream = $entry.Open()
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $writer.BaseStream.SetLength(0)
-            $xml.Save($writer)
-            $writer.Close()
+            if (-not $DoNotApply) {
+                $stream = $entry.Open()
+                $writer = New-Object System.IO.StreamWriter($stream)
+                $writer.BaseStream.SetLength(0)
+                $xml.Save($writer)
+                $writer.Close()
+            }
+            else {}
         }
         $zip.Dispose()
     }
@@ -169,7 +206,14 @@ Write-Progress -Activity "Processing Eligible Files" -Completed
 # Write Change Summary Logs
 Write-Host "`n==== Change Summary ====" -ForegroundColor Cyan
 Write-Host "Files Scanned: $totalFiles"
-Write-Host "Files Updated: $updated"
-Write-Host "Files Created: $created"
-Write-Host "Files Skipped: $skipped"
-Write-Host "Files Errored: $errored"
+
+if ($DoNotApply) {
+    Write-Host "Files To Be Updated: $updated"
+    Write-Host "Files To Be Created: $created"
+} 
+else {
+    Write-Host "Files Updated: $updated"
+    Write-Host "Files Created: $created"
+    Write-Host "Files Skipped: $skipped"
+    Write-Host "Files Errored: $errored"
+}
